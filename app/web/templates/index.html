@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OCR System — Arabic & English</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="bg-grid"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">⊡</span>
+      <div>
+        <h1>OCR System</h1>
+        <p class="tagline">Tesseract&nbsp;·&nbsp;Arabic + English&nbsp;·&nbsp;ANPR&nbsp;·&nbsp;KYC</p>
+      </div>
+    </div>
+    <div id="status" class="status status--checking">Checking engine…</div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab tab--active" data-tab="ocr">📄 Document OCR</button>
+    <button class="tab" data-tab="anpr">🚗 Vehicle Plate (ANPR)</button>
+    <button class="tab" data-tab="kyc">🪪 KYC & Onboarding</button>
+  </nav>
+
+  <main>
+    <!-- OCR -->
+    <section class="panel panel--active" id="panel-ocr">
+      <div class="card">
+        <h2>Document OCR</h2>
+        <p class="muted">Extract text from scanned documents and images. Supports Arabic, English, or both. Posters and colorful photos use an enhanced reader automatically.</p>
+        <div class="controls">
+          <label>Language
+            <select id="ocr-lang">
+              <option value="eng+ara">English + Arabic</option>
+              <option value="eng">English</option>
+              <option value="ara">Arabic (العربية)</option>
+            </select>
+          </label>
+          <label>Page mode (PSM)
+            <select id="ocr-psm">
+              <option value="3">3 — Auto</option>
+              <option value="6">6 — Single block</option>
+              <option value="7">7 — Single line</option>
+              <option value="11">11 — Sparse text</option>
+            </select>
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" id="ocr-pre" checked /> Preprocess (denoise/deskew)
+          </label>
+        </div>
+        <div class="dropzone" data-input="ocr-file">
+          <input type="file" id="ocr-file" accept="image/*" hidden />
+          <p>Drop an image here or <span class="link">browse</span></p>
+        </div>
+        <button class="run" data-action="ocr" disabled>Extract Text</button>
+      </div>
+      <div class="card result" id="ocr-result"><p class="muted">Results appear here.</p></div>
+    </section>
+
+    <!-- ANPR -->
+    <section class="panel" id="panel-anpr">
+      <div class="card">
+        <h2>Smart City Vehicle Recognition</h2>
+        <p class="muted">Open-source ANPR (Automatic Number Plate Recognition) for parking & traffic systems.</p>
+        <div class="dropzone" data-input="anpr-file">
+          <input type="file" id="anpr-file" accept="image/*" hidden />
+          <p>Drop a vehicle photo here or <span class="link">browse</span></p>
+        </div>
+        <button class="run" data-action="anpr" disabled>Read Plate</button>
+      </div>
+      <div class="card result" id="anpr-result"><p class="muted">Results appear here.</p></div>
+    </section>
+
+    <!-- KYC -->
+    <section class="panel" id="panel-kyc">
+      <div class="card">
+        <h2>KYC & Onboarding</h2>
+        <p class="muted">Extract names and IDs from passports, national IDs and driver licenses (MRZ-aware).</p>
+        <div class="controls">
+          <label>Language
+            <select id="kyc-lang">
+              <option value="eng+ara">English + Arabic</option>
+              <option value="eng">English</option>
+              <option value="ara">Arabic (العربية)</option>
+            </select>
+          </label>
+        </div>
+        <div class="dropzone" data-input="kyc-file">
+          <input type="file" id="kyc-file" accept="image/*" hidden />
+          <p>Drop an ID/passport photo here or <span class="link">browse</span></p>
+        </div>
+        <button class="run" data-action="kyc" disabled>Extract Identity</button>
+      </div>
+      <div class="card result" id="kyc-result"><p class="muted">Results appear here.</p></div>
+    </section>
+  </main>
+
+  <footer>
+    <span>Powered by Tesseract OCR · 100% offline · Apache-2.0</span>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

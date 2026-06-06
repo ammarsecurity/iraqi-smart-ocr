@@ -1,0 +1,24 @@
+# Optional: advanced Smart City Vehicle Recognition (ANPR) stack.
+#
+# Adds three things on top of the base install:
+#   1. YOLOv8 plate localization (finds the plate inside a full scene)
+#   2. EDSR super-resolution (sharpens tiny plate crops before OCR)
+#   3. EasyOCR deep reader (reads Arabic-Indic plate digits far better than
+#      Tesseract, which is trained on document text)
+#
+# Heavy (pulls in PyTorch). Install with:
+#   pip install -r requirements-anpr.txt
+#
+# IMPORTANT: this stack needs the OpenCV *contrib* build (for dnn_superres),
+# which must REPLACE opencv-python-headless from the base requirements:
+#   pip uninstall -y opencv-python opencv-python-headless
+#   pip install opencv-contrib-python
+#
+# Model files (download once; see README "Deep-learning ANPR"):
+#   models/license_plate_yolov8.pt   (YOLOv8 plate detector)
+#   models/EDSR_x4.pb                (super-resolution model)
+# EasyOCR downloads its own models automatically on first use.
+
+ultralytics>=8.3
+easyocr>=1.7
+opencv-contrib-python>=4.11

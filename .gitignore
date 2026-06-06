@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Uploads / runtime artifacts
+uploads/
+outputs/
+*.log
+
+# Bundled Tesseract language models (large binaries, install locally)
+tessdata/
+
+# Deep-learning model weights (download locally)
+models/
+*.pt
+
+# Scratch / debug
+_*.log
+_*.png
+_*.json
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+Thumbs.db

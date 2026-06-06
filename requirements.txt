@@ -1,0 +1,12 @@
+# OCR System dependencies
+# Pins are minimum versions chosen so prebuilt wheels exist for modern
+# Python (incl. 3.14). Use a venv: see README.
+fastapi>=0.115
+uvicorn[standard]>=0.34
+python-multipart>=0.0.20
+pytesseract>=0.3.13
+Pillow>=11.0
+opencv-python-headless>=4.11
+numpy>=2.3
+jinja2>=3.1
+pydantic>=2.10
