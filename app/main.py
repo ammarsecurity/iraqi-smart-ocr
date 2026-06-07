@@ -9,12 +9,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
 from . import __version__, config
+from .auth import ApiKeyMiddleware, extract_ws_api_key, verify_api_key
 from .core import engine, superres
 from .features import anpr, easyocr_reader, kyc, plate_detector
 from .warmup import warmup_anpr
@@ -34,8 +36,42 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="OCR System", version=__version__, lifespan=lifespan)
+app.add_middleware(ApiKeyMiddleware)
 app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=str(WEB_DIR / "templates"))
+
+
+def _custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        routes=app.routes,
+        description=app.description,
+    )
+    schema.setdefault("components", {}).setdefault("securitySchemes", {})
+    schema["components"]["securitySchemes"].update(
+        {
+            "ApiKeyHeader": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "X-API-Key",
+                "description": "Project API key (same value as OCR_API_KEY).",
+            },
+            "BearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "description": "Use the API key as the bearer token.",
+            },
+        }
+    )
+    schema["security"] = [{"ApiKeyHeader": []}, {"BearerAuth": []}]
+    app.openapi_schema = schema
+    return app.openapi_schema
+
+
+app.openapi = _custom_openapi
 
 MAX_BYTES = 15 * 1024 * 1024  # 15 MB upload cap
 
@@ -161,6 +197,10 @@ async def api_anpr_frame(file: UploadFile = File(...)):
 @app.websocket("/ws/anpr")
 async def ws_anpr(websocket: WebSocket):
     """Stream JPEG frames for live plate recognition (one frame at a time)."""
+    if not verify_api_key(extract_ws_api_key(websocket)):
+        await websocket.close(code=4401, reason="Invalid or missing API key")
+        return
+
     await websocket.accept()
     processing = False
 

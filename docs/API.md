@@ -17,6 +17,112 @@ Interactive Swagger UI: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
 ---
 
+## Authentication | المصادقة
+
+When `OCR_API_KEY` (or `API_KEY`) is set in the environment, **all API endpoints and WebSockets require a valid key**. The web UI shows an API key prompt on first visit and stores the key in `sessionStorage` for the browser tab.
+
+| Item | Value |
+|------|-------|
+| Environment variable | `OCR_API_KEY` (preferred) or `API_KEY` |
+| Example `.env` | See [`.env.example`](../.env.example) |
+| Local dev without key | Auth disabled (warning logged at startup) |
+| Production | **Always** set a long random secret before exposing the server |
+
+### How to send the key
+
+| Method | Example |
+|--------|---------|
+| Header | `X-API-Key: your-secret-key` |
+| Bearer token | `Authorization: Bearer your-secret-key` |
+| Query string | `?api_key=your-secret-key` (WebSocket and quick tests) |
+
+### curl
+
+```bash
+curl -H "X-API-Key: your-secret-key" http://127.0.0.1:8000/api/health
+```
+
+```bash
+curl -H "Authorization: Bearer your-secret-key" \
+  -F "file=@document.jpg" \
+  -F "lang=eng+ara" \
+  http://127.0.0.1:8000/api/ocr
+```
+
+### Python
+
+```python
+import requests
+
+API_KEY = "your-secret-key"
+headers = {"X-API-Key": API_KEY}
+
+health = requests.get("http://127.0.0.1:8000/api/health", headers=headers)
+print(health.json())
+
+with open("plate.jpg", "rb") as f:
+    r = requests.post(
+        "http://127.0.0.1:8000/api/anpr",
+        headers=headers,
+        files={"file": f},
+    )
+print(r.json())
+```
+
+### JavaScript (fetch)
+
+```javascript
+const API_KEY = "your-secret-key";
+
+const health = await fetch("/api/health", {
+  headers: { "X-API-Key": API_KEY },
+});
+
+const form = new FormData();
+form.append("file", imageFile);
+const ocr = await fetch("/api/ocr", {
+  method: "POST",
+  headers: { "X-API-Key": API_KEY },
+  body: form,
+});
+```
+
+### WebSocket (live ANPR)
+
+Browsers cannot set custom headers on `WebSocket` connections, so pass the key as a query parameter:
+
+```javascript
+const key = encodeURIComponent("your-secret-key");
+const ws = new WebSocket(`ws://127.0.0.1:8000/ws/anpr?api_key=${key}`);
+ws.binaryType = "arraybuffer";
+// send JPEG frame bytes with ws.send(arrayBuffer)
+```
+
+The built-in web UI at `/anpr/live` handles this automatically after you enter the API key.
+
+### Swagger UI
+
+Open [/docs](http://127.0.0.1:8000/docs), click **Authorize**, and enter your key as either:
+
+- **ApiKeyHeader** — the raw key value, or  
+- **BearerAuth** — the same key as the bearer token.
+
+### Errors
+
+| HTTP status | When |
+|-------------|------|
+| `401` | Missing or invalid API key |
+
+```json
+{
+  "detail": "Invalid or missing API key. Send X-API-Key: <key> or Authorization: Bearer <key>."
+}
+```
+
+WebSocket connections with a bad key are closed with code `4401`.
+
+---
+
 ## Overview | نظرة عامة
 
 | Feature | Endpoint | Description |
@@ -38,6 +144,7 @@ All upload endpoints accept **multipart/form-data** with a maximum file size of 
 | HTTP status | When |
 |-------------|------|
 | `400` | Empty file, invalid/corrupt image, or processing error (`detail` string in JSON body) |
+| `401` | Missing or invalid API key (when `OCR_API_KEY` is set) |
 | `413` | File exceeds 15 MB |
 | `503` | Tesseract is not installed or not found (set `TESSERACT_CMD` or see [README](../README.md)) |
 

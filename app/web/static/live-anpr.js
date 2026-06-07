@@ -53,8 +53,7 @@ let currentRoi = { ...ROI_PRESETS.center };
 let roiDrag = null;
 
 function wsUrl() {
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${location.host}/ws/anpr`;
+  return OcrAuth.wsUrl("/ws/anpr");
 }
 
 function confBadge(conf) {
@@ -747,9 +746,13 @@ roiPresetBtns.forEach((btn) => {
   btn.addEventListener("click", () => applyRoiPreset(btn.dataset.preset));
 });
 
-refreshCameraList();
-setRoiLayerMode(false);
-updateRoiDisplay();
+OcrAuth.requireKey().then(() => {
+  refreshCameraList();
+  setRoiLayerMode(false);
+  updateRoiDisplay();
+}).catch(() => {
+  setScanStatus("error", "API key required");
+});
 
 scanBtn.addEventListener("click", () => {
   if (!cameraOn || scanning) return;

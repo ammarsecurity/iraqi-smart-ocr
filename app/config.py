@@ -7,11 +7,44 @@ PATH (e.g. `brew install tesseract`).
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 from pathlib import Path
 
 import pytesseract
+
+logger = logging.getLogger("ocr")
+
+
+def _load_dotenv() -> None:
+    """Load key=value pairs from a project-root .env file if present."""
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if not env_path.is_file():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_dotenv()
+
+# Shared secret for public deployments. Set OCR_API_KEY (preferred) or API_KEY.
+# When unset, API key checks are disabled (local development only).
+API_KEY = (os.environ.get("OCR_API_KEY") or os.environ.get("API_KEY") or "").strip() or None
+if API_KEY:
+    logger.info("API key authentication is enabled.")
+else:
+    logger.warning(
+        "OCR_API_KEY is not set — API endpoints are open. "
+        "Set OCR_API_KEY before exposing this server publicly."
+    )
 
 # Project-local tessdata. If present, we point Tesseract here so the app uses
 # our bundled language models (e.g. a custom/better ara.traineddata) instead of

@@ -28,6 +28,9 @@ _*.log
 _*.png
 _*.json
 
+# Secrets
+.env
+
 # OS / editor
 .DS_Store
 .idea/

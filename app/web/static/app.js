@@ -355,7 +355,7 @@ window.addEventListener("resize", () => {
 async function checkHealth() {
   const el = document.getElementById("status");
   try {
-    const res = await fetch("/api/health");
+    const res = await OcrAuth.authFetch("/api/health");
     const data = await res.json();
     if (data.tesseract_version) {
       el.textContent = `Engine ready · Tesseract ${data.tesseract_version}`;
@@ -426,7 +426,7 @@ async function postFile(url, file, extra = {}) {
   const fd = new FormData();
   fd.append("file", file);
   Object.entries(extra).forEach(([k, v]) => fd.append(k, v));
-  const res = await fetch(url, { method: "POST", body: fd });
+  const res = await OcrAuth.authFetch(url, { method: "POST", body: fd });
   const data = await res.json();
   if (!res.ok) throw new Error(data.detail || "Request failed");
   return data;
@@ -537,4 +537,8 @@ function errBox(e) {
   return `<p class="badge bad" style="display:block;padding:12px">${escapeHtml(e.message)}</p>`;
 }
 
-checkHealth();
+OcrAuth.requireKey().then(checkHealth).catch(() => {
+  const el = document.getElementById("status");
+  el.textContent = "API key required";
+  el.className = "status status--down";
+});

@@ -436,3 +436,50 @@ footer { text-align: center; color: var(--muted); font-size: 13px; padding: 30px
   .roi-handle--sw { bottom: -11px; left: -11px; }
   .roi-handle--w  { left: -11px; margin-top: -11px; }
 }
+
+/* API key gate */
+.api-key-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(6, 10, 20, 0.82);
+  backdrop-filter: blur(6px);
+}
+.api-key-modal--open { display: flex; }
+.api-key-modal__card {
+  width: min(420px, 100%);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+.api-key-modal__card h2 {
+  font-size: 1.25rem;
+  margin-bottom: 8px;
+}
+.api-key-modal__card p { margin-bottom: 18px; }
+.api-key-modal__card label {
+  display: block;
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.api-key-modal__card input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(8, 12, 24, 0.8);
+  color: var(--text);
+  margin-bottom: 12px;
+}
+.api-key-modal__error {
+  color: var(--bad);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
