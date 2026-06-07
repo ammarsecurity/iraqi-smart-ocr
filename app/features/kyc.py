@@ -21,6 +21,7 @@ _MRZ_LINE = re.compile(r"^[A-Z0-9<]{28,44}$")
 _MRZ_TD1_LINE = re.compile(r"^[A-Z0-9<]{28,32}$")
 
 _ARABIC = r"[\u0600-\u06FF\u0750-\u077F\s\-]{2,40}"
+_ARABIC_NAME = r"([\u0600-\u06FF]{2,15})"
 _IRAQI_DATE = r"(\d{4}/\d{2}/\d{2})"
 
 # Bilingual Arabic / Kurdish labels on the Iraqi national ID.
@@ -30,7 +31,7 @@ _FIELD_PATTERNS = {
         re.UNICODE,
     ),
     "father_name": re.compile(
-        rf"(?:الأ?ب|باوك)(?:\s*/\s*[^\n:]*)?\s*[:\-]?\s*({_ARABIC})",
+        rf"(?:ال[أا]?ب|باوك|باوت)(?:\s*/\s*[^\n:]*)?\s*[:\-]?\s*({_ARABIC})",
         re.UNICODE,
     ),
     "grandfather_name": re.compile(
@@ -42,7 +43,7 @@ _FIELD_PATTERNS = {
         re.UNICODE,
     ),
     "mother_name": re.compile(
-        rf"(?:الأ?م|دايك)(?:\s*/\s*[^\n:]*)?\s*[:\-]?\s*({_ARABIC})",
+        rf"(?:ال[أا]?م|دايك|دايث)(?:\s*/\s*[^\n:]*)?\s*[:\-]?\s*({_ARABIC})",
         re.UNICODE,
     ),
     "gender": re.compile(
@@ -66,7 +67,7 @@ _FIELD_PATTERNS = {
         re.UNICODE,
     ),
     "place_of_birth": re.compile(
-        rf"(?:محل\s*(?:ال)?ولادة|شوێنی\s*لەدایکبوون)(?:\s*/\s*[^:])*\s*:\s*({_ARABIC})",
+        rf"(?:محل\s*(?:ال)?ولادة|شوێنی\s*لەدایکبوون)(?:\s*/\s*[^:\d])*\s*:\s*({_ARABIC})",
         re.UNICODE,
     ),
     "issuing_authority": re.compile(
@@ -86,12 +87,16 @@ _FIELD_PATTERNS = {
 
 # Iraqi front cards often print the value immediately before the bilingual label.
 _VALUE_BEFORE_LABEL = {
-    "name": re.compile(rf"({_ARABIC})\s+(?:الاسم|ناو)\s*/", re.UNICODE),
-    "father_name": re.compile(rf"({_ARABIC})\s+الأ?ب\s*/", re.UNICODE),
-    "grandfather_name": re.compile(rf"({_ARABIC})\s+الجد\s*/", re.UNICODE),
-    "mother_name": re.compile(rf"({_ARABIC})\s+الأ?م\s*/", re.UNICODE),
+    "name": re.compile(rf"{_ARABIC_NAME}\s+(?:الاسم|ناو)\s*/", re.UNICODE),
+    "father_name": re.compile(rf"{_ARABIC_NAME}\s+ال[أا]?ب\s*/", re.UNICODE),
+    "place_of_birth": re.compile(
+        r"([\u0600-\u06FF][\u0600-\u06FF\s\.\-]{4,40}?)\s+محل\s*(?:ال)?ولادة",
+        re.UNICODE,
+    ),
+    "grandfather_name": re.compile(rf"{_ARABIC_NAME}\s+الجد\s*/", re.UNICODE),
+    "mother_name": re.compile(rf"{_ARABIC_NAME}\s+ال[أا]?م\s*/", re.UNICODE),
     "surname": re.compile(
-        rf"(?:/|:)\s*({_ARABIC})\s+(?:اللقب|نازناو)", re.UNICODE
+        rf"(?:/|:)\s*{_ARABIC_NAME}\s+(?:اللقب|نازناو)", re.UNICODE
     ),
     "gender": re.compile(r"(ذكر|أ?نثى)\s+الجنس\s*/", re.UNICODE),
 }
@@ -102,11 +107,10 @@ _STANDALONE_PATTERNS = {
     "family_number": re.compile(r"\b(\d{4}[A-Z]\d{2}[A-Z]\d{10,14})\b", re.I),
 }
 
-# Signals used to pick the best card orientation.
-_ROTATION_HINTS = re.compile(
-    r"ID\s*IR\s*Q|IDIRQ|الاسم|ناو|تاريخ|الولادة|النفاذ|البطاقة|الوطنية|"
-    r"AR\d{7}|\d{12}|\d{4}/\d{2}/\d{2}|AL[A-Z]{3,}",
-    re.I | re.UNICODE,
+# Strong signals for Iraqi ID orientation scoring.
+_ID_KEYWORDS = re.compile(
+    r"تاريخ|الاسم|البطاقة|الوطنية|مديرية|الولادة|النفاذ|الاصدار|العائلي|محل",
+    re.UNICODE,
 )
 
 _MRZ_NAME_FIXES = {
@@ -197,20 +201,11 @@ def _collect_mrz_lines(text: str) -> list[str]:
     return lines
 
 
-def parse_td1_mrz(lines: list[str]) -> MRZData | None:
-    """Parse TD1 ID-card MRZ (3 lines × 30 characters)."""
-    candidates = _collect_mrz_lines("\n".join(lines))
-    td1 = [
-        ln
-        for ln in candidates
-        if _MRZ_TD1_LINE.match(ln) and ("IRQ" in ln or "IDIR" in ln[:6])
-    ]
-    if len(td1) < 3:
-        return None
-
-    l1, l2, l3 = td1[-3], td1[-2], td1[-1]
-    # Pad/truncate to 30 chars per ICAO spec.
+def _parse_td1_triplet(l1: str, l2: str, l3: str) -> MRZData | None:
+    """Parse one TD1 MRZ triplet (3×30) into MRZData."""
     l1, l2, l3 = (ln.ljust(30, "<")[:30] for ln in (l1, l2, l3))
+    if not l1.startswith("IDIR"):
+        return None
 
     mrz = MRZData()
     mrz.document_type = l1[0:2].replace("<", "") or None
@@ -226,7 +221,8 @@ def parse_td1_mrz(lines: list[str]) -> MRZData | None:
         mrz.date_of_birth = _parse_mrz_date(l2[0:6])
         mrz.sex = l2[7:8].replace("<", "") or None
         mrz.expiry_date = _parse_mrz_date(l2[8:14])
-        mrz.nationality = l2[15:18].replace("<", "") or None
+        nat = l2[15:18].replace("<", "")
+        mrz.nationality = nat if nat.startswith("IR") else "IRQ"
 
     names = l3.split("<<", 1)
     mrz.surname = _fix_mrz_name(names[0])
@@ -235,6 +231,49 @@ def parse_td1_mrz(lines: list[str]) -> MRZData | None:
         mrz.given_names = _fix_mrz_name(given)
 
     return mrz
+
+
+def _td1_triplet_score(l1: str, l2: str, l3: str, parsed: MRZData) -> int:
+    score = 0
+    if l1.startswith("IDIRQ"):
+        score += 30
+    if re.fullmatch(r"\d{6}", l2[0:6]):
+        score += 15
+    if l2[7:8] in "MF<":
+        score += 10
+    if "<<" in l3 and re.search(r"[A-Z]{3,}", l3):
+        score += 15
+    if parsed.document_number and re.fullmatch(r"AR\d{7}", parsed.document_number, re.I):
+        score += 25
+    if parsed.national_id and re.fullmatch(r"\d{12}", parsed.national_id):
+        score += 20
+    if parsed.given_names and re.search(r"[A-Z]{3,}", parsed.given_names, re.I):
+        score += 10
+    return score
+
+
+def parse_td1_mrz(lines: list[str]) -> MRZData | None:
+    """Parse TD1 ID-card MRZ (3 lines × 30 characters)."""
+    candidates = [
+        ln
+        for ln in _collect_mrz_lines("\n".join(lines))
+        if _MRZ_TD1_LINE.match(ln)
+    ]
+    if len(candidates) < 3:
+        return None
+
+    best: MRZData | None = None
+    best_score = -1
+    for i in range(len(candidates) - 2):
+        l1, l2, l3 = candidates[i], candidates[i + 1], candidates[i + 2]
+        parsed = _parse_td1_triplet(l1, l2, l3)
+        if parsed is None:
+            continue
+        score = _td1_triplet_score(l1, l2, l3, parsed)
+        if score > best_score:
+            best_score = score
+            best = parsed
+    return best
 
 
 def parse_td3_mrz(lines: list[str]) -> MRZData | None:
@@ -273,8 +312,16 @@ def parse_mrz(lines: list[str]) -> MRZData | None:
 def _clean_arabic_value(value: str) -> str:
     value = re.sub(r"\s+", " ", value).strip()
     # Drop trailing label fragments accidentally captured.
-    value = re.split(r"\s*(?:الأ?ب|الجد|اللقب|الأ?م|الجنس|فصيلة|تاريخ|محل|جهة|الرقم)\s", value)[0]
-    return value.strip(" :-/")
+    value = re.split(
+        r"\s*(?:الأ?ب|الجد|اللقب|الأ?م|الجنس|فصيلة|تاريخ|محل|جهة|الرقم|البطاقة|الوطنية)\s",
+        value,
+    )[0]
+    value = re.sub(r"\s*تاريخ.*$", "", value).strip()
+    if "البطاقة" in value or "الوطنية" in value:
+        return ""
+    if len(value) > 35:
+        return ""
+    return value.strip(" :-/.")
 
 
 def _normalize_blood_type(raw: str) -> str:
@@ -300,10 +347,12 @@ def _field_quality(key: str, val: str) -> int:
     if key == "gender":
         return 10 if val in ("ذكر", "أنثى", "انثى") else 0
     if key == "blood_type":
-        return 10 if re.fullmatch(r"[+\-][ABO]", val, re.I) else 0
+        return 10 if re.fullmatch(r"[+\-][ABO]", val, re.I) else (0 if len(val) <= 2 else 0)
     # Arabic personal names — penalize obvious Latin OCR garbage.
     if key in ("name", "father_name", "grandfather_name", "surname", "mother_name"):
         if re.search(r"[A-Za-z]{4,}", val):
+            return 1
+        if any(bad in val for bad in ("جوازات", "مدنية", "البطاقة", "الوطنية", "مديرية")):
             return 1
         return 10 if re.search(r"[\u0600-\u06FF]", val) else 3
     return 5
@@ -311,7 +360,25 @@ def _field_quality(key: str, val: str) -> int:
 
 def _extract_fields(text: str) -> dict[str, str]:
     found: dict[str, str] = {}
+
+    for key, pattern in _STANDALONE_PATTERNS.items():
+        match = pattern.search(text)
+        if match:
+            found[key] = match.group(1).upper() if key == "serial_number" else match.group(1)
+
+    for key, pattern in _VALUE_BEFORE_LABEL.items():
+        match = pattern.search(text)
+        if match:
+            val = _clean_arabic_value(match.group(1).strip())
+            if key == "place_of_birth":
+                val = re.sub(r"\s*\.\s*", " ", val)
+                val = re.sub(r"\s*-\s*", " - ", val).strip()
+            if val and _field_quality(key, val) >= _field_quality(key, found.get(key, "")):
+                found[key] = val
+
     for key, pattern in _FIELD_PATTERNS.items():
+        if found.get(key) and _field_quality(key, found[key]) >= 10:
+            continue
         match = pattern.search(text)
         if match:
             val = match.group(1).strip()
@@ -322,24 +389,24 @@ def _extract_fields(text: str) -> dict[str, str]:
                 val = _clean_arabic_value(val)
             if key == "blood_type":
                 val = _normalize_blood_type(val)
-            if val:
+            if val and _field_quality(key, val) >= _field_quality(key, found.get(key, "")):
                 found[key] = val
 
-    for key, pattern in _VALUE_BEFORE_LABEL.items():
-        if found.get(key):
-            continue
-        match = pattern.search(text)
-        if match:
-            val = _clean_arabic_value(match.group(1).strip())
-            if val:
-                found[key] = val
-
-    for key, pattern in _STANDALONE_PATTERNS.items():
-        if found.get(key):
-            continue
-        match = pattern.search(text)
-        if match:
-            found[key] = match.group(1).upper() if key == "serial_number" else match.group(1)
+    # Blood type often OCR'd as +0 on Iraqi cards.
+    if not found.get("blood_type") or _field_quality("blood_type", found["blood_type"]) < 10:
+        bt = re.search(
+            r"(\+0|\-0|\+O|\-O|\+A|\-A|\+B|\-B|\+AB|\-AB)(?:\s*فصيلة|\s*گرووپي)",
+            text,
+            re.I,
+        )
+        if not bt:
+            bt = re.search(
+                r"(?:فصيلة\s*الدم|گرووپي\s*خوێن|گروپي\s*خون)[^\n+]*(\+0|\-0|\+O|\-O|\+A|\-A|\+B|\-B|\+AB|\-AB)",
+                text,
+                re.I,
+            )
+        if bt:
+            found["blood_type"] = _normalize_blood_type(bt.group(1))
 
     _assign_unlabelled_dates(text, found)
     return found
@@ -366,14 +433,24 @@ def _assign_unlabelled_dates(text: str, found: dict[str, str]) -> None:
 
 def _score_rotation_text(text: str) -> float:
     score = 0.0
+    if _ID_KEYWORDS.search(text):
+        score += 70
+    score += len(re.findall(_IRAQI_DATE, text)) * 25
+    if re.search(r"AR\d{7}", text, re.I):
+        score += 20
+    if re.search(r"\b\d{12}\b", text):
+        score += 15
     compact = re.sub(r"\s+", "", text)
-    if _ROTATION_HINTS.search(text) or _ROTATION_HINTS.search(compact):
-        score += 40
-    mrz_lines = _collect_mrz_lines(text)
-    score += len(mrz_lines) * 15
     if re.search(r"IDIRQ|IDIRAQ", compact, re.I):
-        score += 30
-    score += min(len(text) / 50.0, 20.0)
+        score += 35
+    for ln in text.splitlines():
+        norm = _normalize_mrz_line(ln)
+        if _MRZ_TD1_LINE.match(norm) and "IRQ" in norm:
+            score += 30
+    if len(text) > 20:
+        garbage = len(re.findall(r"[»?؟$]", text)) / len(text)
+        if garbage > 0.12:
+            score -= 50
     return score
 
 
@@ -401,21 +478,9 @@ def _auto_orient(img):
 
             if easyocr_reader.is_available():
                 e_text, e_conf = easyocr_reader.read_id_card(rotated)
-                score = _score_rotation_text(e_text) + e_conf * 0.6
-                if re.search(r"[\u0600-\u06FF]{3,}", e_text):
-                    score += 25
+                score = _score_rotation_text(e_text) + e_conf * 0.4
         except Exception:
             pass
-        if score < 40:
-            try:
-                quick = engine.run_ocr(
-                    rotated, lang="eng+ara", psm=11, auto_fallback=False
-                )
-                score = max(
-                    score, _score_rotation_text(quick.text) + quick.mean_confidence * 0.3
-                )
-            except Exception:
-                pass
         if score > best_score:
             best_score = score
             best_angle = angle
@@ -498,9 +563,18 @@ def _apply_mrz(fields: dict[str, str], mrz: MRZData | None) -> None:
         fields["date_of_birth"] = mrz.date_of_birth
     if mrz.expiry_date and not fields.get("expiry_date"):
         fields["expiry_date"] = mrz.expiry_date
-    if mrz.given_names and not fields.get("name"):
+    if (
+        mrz.given_names
+        and not fields.get("name")
+        and re.search(r"[A-Za-z]{3,}", mrz.given_names)
+        and not re.fullmatch(r"\d+", mrz.given_names)
+    ):
         fields["name"] = mrz.given_names
-    if mrz.surname and not fields.get("surname"):
+    if (
+        mrz.surname
+        and not fields.get("surname")
+        and re.search(r"[A-Za-z]{3,}", mrz.surname)
+    ):
         fields["surname"] = mrz.surname
     if mrz.sex and not fields.get("gender"):
         fields["gender"] = "ذكر" if mrz.sex.upper() == "M" else "أنثى"
