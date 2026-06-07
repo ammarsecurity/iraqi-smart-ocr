@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live ANPR — Vehicle Recognition</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body class="live-page">
+  <div class="bg-grid"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">⊡</span>
+      <div>
+        <h1>Live Vehicle Recognition</h1>
+        <p class="tagline">Live camera · ANPR streaming</p>
+      </div>
+    </div>
+    <a href="/" class="back-link">← Back to OCR</a>
+  </header>
+
+  <main class="live-main">
+    <div class="live-grid">
+      <div class="card live-camera-card">
+        <h2>Camera</h2>
+        <div class="video-wrap">
+          <video id="video" playsinline muted autoplay></video>
+          <div id="roi-layer" class="roi-layer">
+            <div id="roi-box" class="roi-box">
+              <span class="roi-box__label">Reading zone</span>
+              <span class="roi-handle roi-handle--nw" data-handle="nw"></span>
+              <span class="roi-handle roi-handle--n" data-handle="n"></span>
+              <span class="roi-handle roi-handle--ne" data-handle="ne"></span>
+              <span class="roi-handle roi-handle--e" data-handle="e"></span>
+              <span class="roi-handle roi-handle--se" data-handle="se"></span>
+              <span class="roi-handle roi-handle--s" data-handle="s"></span>
+              <span class="roi-handle roi-handle--sw" data-handle="sw"></span>
+              <span class="roi-handle roi-handle--w" data-handle="w"></span>
+            </div>
+          </div>
+          <div id="plate-box" class="plate-box" hidden></div>
+          <canvas id="capture" hidden></canvas>
+          <div id="video-overlay" class="video-overlay video-overlay--off">
+            <span>Camera off</span>
+          </div>
+        </div>
+        <div class="roi-presets">
+          <span class="roi-presets__label">Zone preset</span>
+          <div class="roi-presets__buttons">
+            <button type="button" class="roi-preset-btn" data-preset="center">Center</button>
+            <button type="button" class="roi-preset-btn" data-preset="bottom">Bottom</button>
+            <button type="button" class="roi-preset-btn" data-preset="full">Full</button>
+          </div>
+        </div>
+        <div class="live-camera-picker">
+          <label for="camera-select" class="live-camera-picker__label">Camera source</label>
+          <select id="camera-select" disabled>
+            <option value="">Loading…</option>
+          </select>
+        </div>
+        <div class="live-controls">
+          <button id="toggle-btn" class="run live-toggle">Start Camera</button>
+          <button id="scan-btn" class="run run--secondary" disabled>Scan Now</button>
+        </div>
+        <div class="live-meta">
+          <span id="fps-label" class="meta-pill">FPS: —</span>
+          <span id="throttle-label" class="meta-pill">Interval: 2.0s</span>
+          <span id="ws-label" class="meta-pill meta-pill--muted">WebSocket: disconnected</span>
+        </div>
+      </div>
+
+      <div class="card live-result-card">
+        <h2>Detected Plate</h2>
+        <div id="scan-status" class="scan-status scan-status--off">Camera off</div>
+        <div id="plate-display" class="plate plate--empty" dir="ltr">—</div>
+        <div id="conf-display" class="conf-row"></div>
+        <div id="time-display" class="time-row muted"></div>
+        <p id="hint" class="muted live-hint">
+          Point the camera at a license plate. Auto-scan every ~2s, or tap <strong>Scan Now</strong>. Camera needs HTTPS on remote hosts (localhost is fine).
+        </p>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <span>Powered by Tesseract OCR · 100% offline · Apache-2.0</span>
+  </footer>
+
+  <script src="/static/live-anpr.js"></script>
+</body>
+</html>

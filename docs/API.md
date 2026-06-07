@@ -23,10 +23,13 @@ Interactive Swagger UI: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 |---------|----------|-------------|
 | Document OCR | `POST /api/ocr` | Extract Arabic/English text from documents and images |
 | Vehicle Recognition (ANPR) | `POST /api/anpr` | License plate recognition (Latin & Arabic-Indic plates) |
+| Live ANPR UI | `GET /anpr/live` | Browser page with camera preview, ROI crop, and streaming recognition |
+| Live ANPR (WebSocket) | `WS /ws/anpr` | Stream cropped JPEG frames from a live camera for plate recognition |
+| Live ANPR (single frame) | `POST /api/anpr/frame` | HTTP alternative: upload one JPEG frame (same pipeline as `/api/anpr`) |
 | KYC & Onboarding | `POST /api/kyc` | Iraqi national ID / passport identity field extraction |
 | Health | `GET /api/health` | Engine status, installed languages, ANPR component availability |
 
-All upload endpoints accept **multipart/form-data** with a maximum file size of **15 MB**.
+All upload endpoints accept **multipart/form-data** with a maximum file size of **15 MB** (`POST /api/anpr/frame` uses a **4 MB** cap for live JPEG frames).
 
 ---
 
@@ -300,6 +303,252 @@ else:
 
 ---
 
+## Live ANPR — Camera streaming
+## بث الكاميرا المباشر للتعرف على اللوحات
+
+Real-time plate recognition from a device camera. The built-in UI (`GET /anpr/live`) captures video, crops a **region of interest (ROI)** on the client, and streams JPEG frames over WebSocket. Integrators can use the same WebSocket protocol or upload single frames via `POST /api/anpr/frame`.
+
+Recognition uses the same ANPR pipeline as `POST /api/anpr` (YOLO detection → super-resolution → EasyOCR/Tesseract). See [POST /api/anpr](#post-apianpr--smart-city-vehicle-recognition) for response field definitions (`best_plate`, `best_confidence`, `raw_text`, `candidates`).
+
+---
+
+## GET /anpr/live — Live camera UI
+## واجهة الكاميرا المباشرة
+
+Serves an HTML page with camera preview, draggable ROI overlay, preset crop regions (center / bottom / full frame), automatic capture every **2 seconds**, manual scan button, and live plate display.
+
+| Item | Value |
+|------|-------|
+| URL | `http://127.0.0.1:8000/anpr/live` |
+| Method | `GET` |
+| Response | `text/html` |
+
+Open in a browser after starting the server. The page connects to `WS /ws/anpr` automatically when the camera is started.
+
+```powershell
+start http://127.0.0.1:8000/anpr/live
+```
+
+---
+
+## WebSocket /ws/anpr — Frame streaming
+## بث الإطارات عبر WebSocket
+
+Primary endpoint for low-latency live recognition. The client sends **binary JPEG** frames; the server replies with **JSON** status messages.
+
+### Connect
+
+```
+ws://127.0.0.1:8000/ws/anpr
+```
+
+On HTTPS deployments use `wss://<host>/ws/anpr` (see [Camera access](#camera-access--إذن-الكاميرا) below).
+
+### Throttling
+
+The server processes **one frame at a time** (no queue). If a new binary frame arrives while recognition is still running, the server immediately replies with:
+
+```json
+{ "status": "busy" }
+```
+
+The frame is **discarded**. Clients should track `busy` responses and avoid sending while `scanning` is in effect, or pace captures (the built-in UI uses a 2 s interval and skips sends while `scanning` is true).
+
+Maximum frame size: **15 MB** (same as other upload endpoints). Oversized frames return `{"status": "error", "detail": "Frame too large (max 15 MB)."}`.
+
+### Client → server
+
+| Message | Format | Description |
+|---------|--------|-------------|
+| Frame | Binary (`image/jpeg`) | JPEG image bytes — typically a **client-cropped ROI** (see below) |
+
+Recommended client settings (used by `live-anpr.js`):
+
+| Setting | Value |
+|---------|-------|
+| Max frame width | 1280 px (height scaled proportionally before crop) |
+| JPEG quality | `0.85` |
+| Capture interval | ~2000 ms (auto); manual scan minimum 1000 ms apart |
+
+### Server → client (JSON)
+
+Every response is a JSON object with a `status` field:
+
+| `status` | Meaning | Other fields |
+|----------|---------|--------------|
+| `scanning` | Frame accepted; recognition started | — |
+| `busy` | Previous frame still processing — new frame dropped | — |
+| `result` | Recognition finished | ANPR fields + `processing_ms` |
+| `error` | Processing failed | `detail` (string) |
+
+When `status` is `result`, the payload includes the same fields as `POST /api/anpr`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `best_plate` | string \| null | Highest-ranked plate number (Latin digits) |
+| `best_confidence` | number \| null | Confidence for `best_plate` (0–100) |
+| `raw_text` | string | Raw OCR text from the best detection pass |
+| `candidates` | array | All plate candidates, ranked best-first (each with `plate`, `text`, `confidence`, `box`) |
+| `processing_ms` | number | Server-side recognition time in milliseconds |
+
+Example `scanning`:
+
+```json
+{ "status": "scanning" }
+```
+
+Example `result`:
+
+```json
+{
+  "status": "result",
+  "best_plate": "10346",
+  "best_confidence": 91.25,
+  "raw_text": "10346",
+  "candidates": [
+    {
+      "plate": "10346",
+      "text": "10346",
+      "confidence": 91.25,
+      "box": [412, 318, 186, 54]
+    }
+  ],
+  "processing_ms": 2840
+}
+```
+
+Example `error`:
+
+```json
+{
+  "status": "error",
+  "detail": "Tesseract is not installed or not found. Install it (see README) or set TESSERACT_CMD, then restart."
+}
+```
+
+### JavaScript client example
+
+```javascript
+const ws = new WebSocket("ws://127.0.0.1:8000/ws/anpr");
+ws.binaryType = "arraybuffer";
+
+ws.onopen = () => console.log("connected");
+ws.onmessage = (ev) => {
+  const data = JSON.parse(ev.data);
+  if (data.status === "result") {
+    console.log(data.best_plate, data.best_confidence, data.processing_ms + " ms");
+  } else if (data.status === "busy") {
+    console.log("server busy — frame dropped");
+  } else if (data.status === "error") {
+    console.error(data.detail);
+  }
+};
+
+// Send a cropped JPEG ArrayBuffer (e.g. from canvas.toBlob → arrayBuffer)
+function sendFrame(jpegArrayBuffer) {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(jpegArrayBuffer);
+  }
+}
+```
+
+---
+
+## POST /api/anpr/frame — Single frame upload
+## رفع إطار واحد من الكاميرا
+
+HTTP alternative when WebSockets are unavailable. Accepts one JPEG frame and runs the same recognition as `POST /api/anpr`, with `processing_ms` added to the response.
+
+### Request (multipart/form-data)
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `file` | yes | JPEG frame (typically client-cropped ROI) |
+
+Maximum frame size: **4 MB** (stricter than WebSocket to suit mobile uploads).
+
+### Response fields
+
+Same as [POST /api/anpr](#post-apianpr--smart-city-vehicle-recognition), plus:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `processing_ms` | number | Server-side recognition time in milliseconds |
+
+### Example response
+
+```json
+{
+  "best_plate": "10346",
+  "best_confidence": 91.25,
+  "raw_text": "10346",
+  "candidates": [],
+  "processing_ms": 2650
+}
+```
+
+### curl (PowerShell)
+
+```powershell
+curl.exe -X POST "http://127.0.0.1:8000/api/anpr/frame" `
+  -F "file=@C:\path\to\frame.jpg"
+```
+
+### Python
+
+```python
+import requests
+
+with open("frame.jpg", "rb") as f:
+    r = requests.post(
+        "http://127.0.0.1:8000/api/anpr/frame",
+        files={"file": ("frame.jpg", f, "image/jpeg")},
+    )
+result = r.json()
+print(result.get("best_plate"), result.get("processing_ms"), "ms")
+```
+
+---
+
+## Region of interest (ROI) — client-side crop
+## منطقة الاهتمام — قصّ الإطار على العميل
+
+The server receives **already-cropped** JPEG images. ROI selection is performed entirely in the browser (or your client):
+
+1. Scale the video frame so width ≤ 1280 px.
+2. Crop a normalized rectangle `(x, y, w, h)` where each value is 0–1 relative to the scaled frame.
+3. Encode the crop as JPEG and send via WebSocket or `POST /api/anpr/frame`.
+
+The built-in UI (`GET /anpr/live`) provides draggable ROI handles and presets:
+
+| Preset | Normalized `(x, y, w, h)` | Use case |
+|--------|---------------------------|----------|
+| `center` | `(0.15, 0.35, 0.7, 0.3)` | Plate in middle of frame |
+| `bottom` | `(0.1, 0.55, 0.8, 0.4)` | Rear / front bumper plates |
+| `full` | `(0, 0, 1, 1)` | Full frame (slower, more false positives) |
+
+Minimum ROI size: **20%** of frame width and height. ROI per camera device is persisted in `localStorage` by the built-in UI.
+
+Bounding boxes in `candidates[].box` are relative to the **cropped image** sent to the server, not the full camera view.
+
+---
+
+## Camera access — إذن الكاميرا
+
+Live capture uses the browser [MediaDevices.getUserMedia()](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia) API.
+
+| Environment | Camera access |
+|-------------|---------------|
+| `http://localhost` or `http://127.0.0.1` | Allowed (secure context exception) |
+| `http://<LAN-IP>` or other HTTP host | **Blocked** — use HTTPS |
+| `https://<host>` | Allowed (user must grant permission) |
+
+Typical constraints used by the built-in UI: `{ video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false }`, with optional `deviceId` for multi-camera selection and `facingMode: "environment"` on mobile when no device is selected.
+
+Common errors: `NotAllowedError` (permission denied), `NotFoundError` (no camera), `NotReadableError` (camera in use by another app).
+
+---
+
 ## POST /api/kyc — KYC & Onboarding
 ## استخراج بيانات الهوية — البطاقة الوطنية العراقية
 
@@ -451,6 +700,13 @@ print(f"Confidence: {result['confidence']}%")
 | `eng+ara` | Mixed or bilingual content (**default** for OCR and KYC) |
 
 Tesseract must have the corresponding traineddata installed. Run `GET /api/health` and check `installed_languages`.
+
+### Live ANPR tips
+
+- Crop to the plate area on the client (ROI) before sending — smaller images process faster and reduce false detections.
+- Pace frames to match server throughput (~2 s interval in the built-in UI); respect `busy` responses instead of queuing frames.
+- For mobile or non-WebSocket clients, use `POST /api/anpr/frame` with the same cropped JPEG.
+- On remote hosts, serve over **HTTPS** so browsers allow `getUserMedia`.
 
 ### ANPR optional models
 

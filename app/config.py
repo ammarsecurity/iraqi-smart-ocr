@@ -29,7 +29,7 @@ def configure_tessdata() -> str | None:
 # Languages we ship support for out of the box.
 SUPPORTED_LANGUAGES = {
     "eng": "English",
-    "ara": "Arabic (العربية)",
+    "ara": "Arabic",
     "eng+ara": "English + Arabic",
 }
 DEFAULT_LANGUAGE = "eng+ara"

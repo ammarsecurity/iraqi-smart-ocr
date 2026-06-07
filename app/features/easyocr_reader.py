@@ -57,12 +57,44 @@ def _assemble_top_row(results, img_h: int) -> tuple[str, float]:
     if len(boxes) < 2:
         return "", 0.0
 
+    # One box already holds most of the plate (e.g. "567955"). Joining a stray
+    # leading digit from the grille ("8" + "567955") produces false 7-digit reads.
+    if any(len(d) >= 5 for _, d, _ in boxes):
+        return "", 0.0
+
     boxes.sort(key=lambda item: item[0])
     assembled = "".join(d for _, d, _ in boxes)
     if not (4 <= len(assembled) <= 8):
         return "", 0.0
     conf = float(np.mean([p for _, _, p in boxes])) * 100.0
     return assembled, conf
+
+
+def _collect_runs_from_results(
+    results, img_h: int, *, boost_top_row: bool = True
+) -> tuple[list[tuple[str, float]], list[str]]:
+    runs: list[tuple[str, float]] = []
+    texts: list[str] = []
+
+    assembled, asm_conf = _assemble_top_row(results, img_h)
+    if assembled:
+        runs.append((assembled, asm_conf))
+
+    for box, text, prob in results:
+        texts.append(text)
+        conf = float(prob) * 100.0
+        y_center = (box[0][1] + box[2][1]) / 2.0
+        if boost_top_row and img_h > 0 and y_center < img_h * 0.55:
+            conf = min(100.0, conf * 1.15)
+        runs.extend(runs_from_text(text, conf))
+
+    joined = " ".join(t for _, t, _ in results)
+    if joined:
+        mean_conf = float(np.mean([float(p) for _, _, p in results])) * 100.0
+        for digits in spaced_digit_plates(joined):
+            runs.append((digits, mean_conf))
+
+    return runs, texts
 
 
 def read_plate_digits(images: list[np.ndarray]) -> tuple[str, float, str]:
@@ -74,28 +106,27 @@ def read_plate_digits(images: list[np.ndarray]) -> tuple[str, float, str]:
     runs: list[tuple[str, float]] = []
     texts: list[str] = []
     for img in images:
+        img_h = img.shape[0]
         try:
             results = reader.readtext(img, detail=1)
         except Exception:
             continue
 
-        assembled, asm_conf = _assemble_top_row(results, img.shape[0])
-        if assembled:
-            runs.append((assembled, asm_conf))
+        batch_runs, batch_texts = _collect_runs_from_results(results, img_h)
+        runs.extend(batch_runs)
+        texts.extend(batch_texts)
 
-        for box, text, prob in results:
-            texts.append(text)
-            conf = float(prob) * 100.0
-            y_center = (box[0][1] + box[2][1]) / 2.0
-            if img.shape[0] > 0 and y_center < img.shape[0] * 0.55:
-                conf = min(100.0, conf * 1.15)
-            runs.extend(runs_from_text(text, conf))
-
-        joined = " ".join(t for _, t, _ in results)
-        if joined:
-            mean_conf = float(np.mean([float(p) for _, _, p in results])) * 100.0
-            for digits in spaced_digit_plates(joined):
-                runs.append((digits, mean_conf))
+        # Latin-digit pass helps recover spaced western rows (1 9 7 5 3).
+        try:
+            latin = reader.readtext(img, detail=1, allowlist="0123456789 ")
+        except Exception:
+            latin = []
+        if latin:
+            latin_runs, latin_texts = _collect_runs_from_results(
+                latin, img_h, boost_top_row=False
+            )
+            runs.extend(latin_runs)
+            texts.extend(latin_texts)
 
     if not runs:
         return "", 0.0, " ".join(texts).strip()

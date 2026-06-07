@@ -153,8 +153,80 @@ def _digit_pass(image: np.ndarray, lang: str, whitelist: str | None, psm: int) -
     return pick_best_digits(runs)
 
 
-def _ocr_plate_crop(img: np.ndarray, box: tuple[int, int, int, int], pad: float = 0.15) -> PlateCandidate | None:
+def _is_live_roi_crop(img: np.ndarray, *, user_cropped: bool = False) -> bool:
+    """True for small live-camera frames or wide plate strips — not full scene photos."""
+    if user_cropped:
+        return False
+    h, w = img.shape[:2]
+    if max(h, w) <= 720:
+        return True
+    if h * w <= 350_000:
+        return True
+    if h > 0 and w / float(h) >= 2.8:
+        return True
+    return False
+
+
+def _edge_pad_crop(crop: np.ndarray, left_frac: float = 0.03) -> np.ndarray:
+    """Replicate a slim left border so leading plate digits are not clipped at OCR edges."""
+    pw = max(3, int(crop.shape[1] * left_frac))
+    return cv2.copyMakeBorder(crop, 0, 0, pw, 0, cv2.BORDER_REPLICATE)
+
+
+def _expand_narrow_box(
+    img: np.ndarray, box: tuple[int, int, int, int], *, user_cropped: bool = False
+) -> tuple[tuple[int, int, int, int], bool]:
+    """Widen partial YOLO boxes that only cover part of the digit row (live ROI only)."""
+    if not _is_live_roi_crop(img, user_cropped=user_cropped):
+        return box, False
+    img_h, img_w = img.shape[:2]
+    x, y, w, h = box
+    if w >= img_w * 0.45:
+        return box, False
+    pad_y = max(int(h * 0.6), 4)
+    y0 = max(0, y - pad_y)
+    y1 = min(img_h, y + h + pad_y)
+    return (0, y0, img_w, y1 - y0), True
+
+
+def _ocr_on_crops(
+    crops: list[np.ndarray],
+) -> tuple[list[tuple[str, float]], str]:
+    """Run EasyOCR plate-digit reads on one or more crops; return runs + raw text."""
+    all_runs: list[tuple[str, float]] = []
+    raw = ""
+    if not easyocr_reader.is_available():
+        return all_runs, raw
+
+    for crop in crops:
+        if crop.size == 0:
+            continue
+        # Edge padding recovers leading digits EasyOCR drops at tight crop boundaries.
+        variants = [crop]
+        padded = _edge_pad_crop(crop)
+        if padded.shape != crop.shape:
+            variants.append(padded)
+        for variant in variants:
+            num_crop = _number_line_crop(variant)
+            for work in (num_crop, variant):
+                enhanced = _enhance_plate(work)
+                eo_digits, eo_conf, eo_text = easyocr_reader.read_plate_digits([enhanced])
+                if eo_digits:
+                    all_runs.append((eo_digits, eo_conf))
+                if eo_text:
+                    raw = eo_text
+    return all_runs, raw
+
+
+def _ocr_plate_crop(
+    img: np.ndarray,
+    box: tuple[int, int, int, int],
+    pad: float = 0.15,
+    *,
+    user_cropped: bool = False,
+) -> PlateCandidate | None:
     """Crop a detected plate box, enhance it, and read the plate number."""
+    box, was_narrow = _expand_narrow_box(img, box, user_cropped=user_cropped)
     x, y, w, h = box
     px, py = int(w * pad), int(h * pad)
     x0, y0 = max(0, x - px), max(0, y - py)
@@ -163,32 +235,17 @@ def _ocr_plate_crop(img: np.ndarray, box: tuple[int, int, int, int], pad: float 
     if crop.size == 0:
         return None
 
+    fallback_crops = [crop]
+    if _is_live_roi_crop(img, user_cropped=user_cropped) and (was_narrow or w < img.shape[1] * 0.75):
+        fallback_crops.append(img)
+
+    all_runs, raw = _ocr_on_crops(fallback_crops)
+    best_digits, best_conf = pick_best_digits(all_runs)
+
     num_crop = _number_line_crop(crop)
     enhanced = _enhance_plate(num_crop)
 
-    all_runs: list[tuple[str, float]] = []
-    raw = ""
-
-    # 1) EasyOCR on the digit row.
-    if easyocr_reader.is_available():
-        eo_digits, eo_conf, eo_text = easyocr_reader.read_plate_digits([enhanced])
-        if eo_digits:
-            all_runs.append((eo_digits, eo_conf))
-        raw = eo_text
-
-    best_digits, best_conf = pick_best_digits(all_runs)
-
-    # 2) Retry on full plate if we don't have a solid 5+ digit read yet.
-    if len(best_digits) < 5 and easyocr_reader.is_available():
-        enhanced_full = _enhance_plate(crop)
-        eo_digits, eo_conf, eo_text = easyocr_reader.read_plate_digits([enhanced_full])
-        if eo_digits:
-            all_runs.append((eo_digits, eo_conf))
-        if eo_text:
-            raw = eo_text
-        best_digits, best_conf = pick_best_digits(all_runs)
-
-    # 3) Tesseract — only when EasyOCR failed (2 passes, not 18).
+    # Tesseract — only when EasyOCR failed (2 passes, not 18).
     if len(best_digits) < 3:
         for lang, psm in (("ara", 7), ("eng", 7)):
             digits, conf = _digit_pass(enhanced, lang, _LATIN_DIGITS if lang == "eng" else None, psm)
@@ -204,25 +261,57 @@ def _ocr_plate_crop(img: np.ndarray, box: tuple[int, int, int, int], pad: float 
     return PlateCandidate(plate=best_digits, text=raw, confidence=best_conf, box=box)
 
 
-def recognize_plate(data: bytes) -> ANPRResult:
+def recognize_plate(data: bytes, *, user_cropped: bool = False) -> ANPRResult:
     """Detect and read license plates (Latin or Arabic) from image bytes."""
     engine.ensure_available()
     img = preprocess.to_cv_image(data)
 
     candidates: list[PlateCandidate] = []
     raw_text = ""
+    detections: list = []
 
-    # 1) Deep-learning detector (YOLO) — best for plates inside a full scene.
-    detections = plate_detector.detect_plates(img, conf=0.25)
-    for box, _det_conf in detections[:3]:
-        cand = _ocr_plate_crop(img, box)
+    # Static upload with client-side ROI: the whole frame is already the plate strip.
+    if user_cropped:
+        full_box = (0, 0, img.shape[1], img.shape[0])
+        cand = _ocr_plate_crop(img, full_box, user_cropped=True)
         if cand:
             candidates.append(cand)
             raw_text = cand.text
-            break  # good read — stop early
+        if not candidates:
+            whole = engine.run_ocr(img, lang="eng+ara", psm=7)
+            raw_text = whole.text
+            cand = _extract_plate(
+                whole.text, whole.mean_confidence, full_box
+            )
+            if cand:
+                candidates.append(cand)
+    else:
+        # 1) Deep-learning detector (YOLO) — best for plates inside a full scene.
+        detections = plate_detector.detect_plates(img, conf=0.25)
+        for box, _det_conf in detections[:3]:
+            cand = _ocr_plate_crop(img, box)
+            if cand:
+                candidates.append(cand)
+                raw_text = cand.text
+                # Partial reads (e.g. 9753) are common on tight YOLO boxes — keep trying.
+                if len(cand.plate) >= 5:
+                    break
+
+        # Retry on the full frame when YOLO only yielded a short partial read (live ROI).
+        if (
+            _is_live_roi_crop(img)
+            and candidates
+            and all(len(c.plate) < 5 for c in candidates)
+        ):
+            full_box = (0, 0, img.shape[1], img.shape[0])
+            full_cand = _ocr_plate_crop(img, full_box)
+            if full_cand:
+                candidates.append(full_cand)
+                if not raw_text:
+                    raw_text = full_cand.text
 
     # Full-frame fallback only when YOLO found no plate at all.
-    if not candidates and not detections:
+    if not user_cropped and not candidates and not detections:
         whole = engine.run_ocr(img, lang="eng+ara", psm=6)
         raw_text = whole.text
         cand = _extract_plate(

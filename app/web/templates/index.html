@@ -6,7 +6,7 @@
   <title>OCR System — Arabic & English</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v=20250607" />
 </head>
 <body>
   <div class="bg-grid"></div>
@@ -26,6 +26,8 @@
     <button class="tab tab--active" data-tab="ocr">📄 Document OCR</button>
     <button class="tab" data-tab="anpr">🚗 Vehicle Plate (ANPR)</button>
     <button class="tab" data-tab="kyc">🪪 KYC & Onboarding</button>
+    <a class="tab" href="/anpr/live">📷 Live Camera</a>
+    <a class="tab" href="/docs" target="_blank" rel="noopener">📖 API Docs</a>
   </nav>
 
   <main>
@@ -39,7 +41,7 @@
             <select id="ocr-lang">
               <option value="eng+ara">English + Arabic</option>
               <option value="eng">English</option>
-              <option value="ara">Arabic (العربية)</option>
+              <option value="ara">Arabic</option>
             </select>
           </label>
           <label>Page mode (PSM)
@@ -68,9 +70,35 @@
       <div class="card">
         <h2>Smart City Vehicle Recognition</h2>
         <p class="muted">Open-source ANPR (Automatic Number Plate Recognition) for parking & traffic systems.</p>
-        <div class="dropzone" data-input="anpr-file">
+        <div class="dropzone anpr-dropzone" data-input="anpr-file" id="anpr-dropzone">
           <input type="file" id="anpr-file" accept="image/*" hidden />
-          <p>Drop a vehicle photo here or <span class="link">browse</span></p>
+          <p class="anpr-dropzone__hint">Drop a vehicle photo here or <span class="link">browse</span></p>
+          <div class="anpr-preview-wrap" id="anpr-preview-wrap" hidden>
+            <img id="anpr-preview-img" alt="preview" />
+            <div id="anpr-roi-layer" class="roi-layer roi-layer--active">
+              <div id="anpr-roi-box" class="roi-box">
+                <span class="roi-box__label">Reading zone — drag over plate</span>
+                <span class="roi-handle roi-handle--nw" data-handle="nw"></span>
+                <span class="roi-handle roi-handle--n" data-handle="n"></span>
+                <span class="roi-handle roi-handle--ne" data-handle="ne"></span>
+                <span class="roi-handle roi-handle--e" data-handle="e"></span>
+                <span class="roi-handle roi-handle--se" data-handle="se"></span>
+                <span class="roi-handle roi-handle--s" data-handle="s"></span>
+                <span class="roi-handle roi-handle--sw" data-handle="sw"></span>
+                <span class="roi-handle roi-handle--w" data-handle="w"></span>
+              </div>
+            </div>
+          </div>
+          <p class="anpr-filename muted" id="anpr-filename" hidden></p>
+        </div>
+        <div class="roi-presets" id="anpr-roi-presets" hidden>
+          <span class="roi-presets__label">Reading zone preset</span>
+          <p class="anpr-roi-hint muted" id="anpr-roi-hint">Adjust the orange box over the license plate, then click Read Plate.</p>
+          <div class="roi-presets__buttons">
+            <button type="button" class="roi-preset-btn" data-preset="center" data-roi-scope="anpr">Center</button>
+            <button type="button" class="roi-preset-btn" data-preset="bottom" data-roi-scope="anpr">Bottom</button>
+            <button type="button" class="roi-preset-btn" data-preset="full" data-roi-scope="anpr">Full</button>
+          </div>
         </div>
         <button class="run" data-action="anpr" disabled>Read Plate</button>
       </div>
@@ -87,7 +115,7 @@
             <select id="kyc-lang">
               <option value="eng+ara">English + Arabic</option>
               <option value="eng">English</option>
-              <option value="ara">Arabic (العربية)</option>
+              <option value="ara">Arabic</option>
             </select>
           </label>
         </div>
@@ -105,6 +133,6 @@
     <span>Powered by Tesseract OCR · 100% offline · Apache-2.0</span>
   </footer>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=20250607"></script>
 </body>
 </html>

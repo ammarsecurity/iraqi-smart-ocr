@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -63,6 +65,11 @@ async def index(request: Request):
     return templates.TemplateResponse(request, "index.html")
 
 
+@app.get("/anpr/live", response_class=HTMLResponse)
+async def live_anpr(request: Request):
+    return templates.TemplateResponse(request, "live_anpr.html")
+
+
 @app.get("/api/health")
 async def health():
     return {
@@ -113,14 +120,108 @@ async def api_ocr(
 
 
 @app.post("/api/anpr")
-async def api_anpr(file: UploadFile = File(...)):
+async def api_anpr(
+    file: UploadFile = File(...),
+    user_cropped: bool = Form(False),
+):
     _guard_tesseract()
     data = await _read_upload(file)
+    cropped = user_cropped or (
+        file.filename is not None and file.filename.endswith("-roi.jpg")
+    )
+    try:
+        result = anpr.recognize_plate(data, user_cropped=cropped)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse(result.to_dict())
+
+
+LIVE_FRAME_MAX_BYTES = 4 * 1024 * 1024  # 4 MB — live JPEG frames only
+
+
+@app.post("/api/anpr/frame")
+async def api_anpr_frame(file: UploadFile = File(...)):
+    """Single JPEG frame from live camera (same recognition as /api/anpr)."""
+    _guard_tesseract()
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty frame.")
+    if len(data) > LIVE_FRAME_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Frame too large (max 4 MB).")
+    t0 = time.perf_counter()
     try:
         result = anpr.recognize_plate(data)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return JSONResponse(result.to_dict())
+    payload = result.to_dict()
+    payload["processing_ms"] = round((time.perf_counter() - t0) * 1000)
+    return JSONResponse(payload)
+
+
+@app.websocket("/ws/anpr")
+async def ws_anpr(websocket: WebSocket):
+    """Stream JPEG frames for live plate recognition (one frame at a time)."""
+    await websocket.accept()
+    processing = False
+
+    try:
+        while True:
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
+
+            frame = message.get("bytes")
+            if frame is None:
+                continue
+
+            if processing:
+                await websocket.send_json({"status": "busy"})
+                continue
+
+            if len(frame) > MAX_BYTES:
+                await websocket.send_json(
+                    {"status": "error", "detail": "Frame too large (max 15 MB)."}
+                )
+                continue
+
+            processing = True
+            await websocket.send_json({"status": "scanning"})
+            t0 = time.perf_counter()
+
+            try:
+                _guard_tesseract_ws()
+                result = await asyncio.to_thread(anpr.recognize_plate, frame)
+                payload = result.to_dict()
+                payload["status"] = "result"
+                payload["processing_ms"] = round((time.perf_counter() - t0) * 1000)
+            except (_WsAnprError, ValueError) as exc:
+                payload = {"status": "error", "detail": str(exc)}
+            except Exception:
+                logger.exception("ANPR WebSocket recognition failed")
+                payload = {"status": "error", "detail": "Recognition failed."}
+            finally:
+                processing = False
+
+            # The client may have disconnected while we were recognizing
+            # (e.g. camera stopped or page closed); stop quietly if so.
+            try:
+                await websocket.send_json(payload)
+            except (WebSocketDisconnect, RuntimeError):
+                break
+    except WebSocketDisconnect:
+        pass
+
+
+class _WsAnprError(Exception):
+    pass
+
+
+def _guard_tesseract_ws() -> None:
+    if config.locate_tesseract() is None:
+        raise _WsAnprError(
+            "Tesseract is not installed or not found. Install it (see README) "
+            "or set TESSERACT_CMD, then restart."
+        )
 
 
 @app.post("/api/kyc")

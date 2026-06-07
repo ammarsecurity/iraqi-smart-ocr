@@ -85,16 +85,47 @@ def pick_best_digits(runs: list[tuple[str, float]]) -> tuple[str, float]:
     if not scored:
         return "", 0.0
 
-    best_digits, best_conf, best_score = max(scored, key=lambda item: item[2])
+    # EasyOCR often merges grille noise with the plate ("8567955" for "567955").
+    expanded: list[tuple[str, float, float]] = list(scored)
+    seen = {digits for digits, _, _ in scored}
+    for digits, conf, _score in scored:
+        if len(digits) < 7:
+            continue
+        inner = digits[1:]
+        if inner in seen:
+            continue
+        if not (_MIN_PLATE_DIGITS <= len(inner) <= _MAX_PLATE_DIGITS):
+            continue
+        seen.add(inner)
+        inner_conf = conf * 0.98
+        expanded.append((inner, inner_conf, score_plate_digits(inner, inner_conf)))
 
-    # EasyOCR often reads "9753" strongly but misses a leading "1" from "1 9 7 5 3".
-    # Prefer a longer run that ends with the current best (e.g. 19753 ⊃ 9753).
-    for digits, conf, score in scored:
-        if len(digits) <= len(best_digits):
-            continue
-        if not digits.endswith(best_digits):
-            continue
-        if score >= best_score * 0.55:
-            best_digits, best_conf, best_score = digits, conf, score
+    best_digits, best_conf, best_score = max(expanded, key=lambda item: item[2])
+
+    # EasyOCR on tight live crops often reads "9753" but misses a leading "1".
+    # Only recover one missing leading digit on a 4-char partial read — never on
+    # full-frame garbage where "519753" falsely extends a correct "19753".
+    if len(best_digits) == 4:
+        for digits, conf, score in expanded:
+            if len(digits) != len(best_digits) + 1:
+                continue
+            if not digits.endswith(best_digits):
+                continue
+            if not (_MIN_PLATE_DIGITS <= len(digits) <= _MAX_PLATE_DIGITS):
+                continue
+            if score >= best_score * 0.45:
+                best_digits, best_conf, best_score = digits, conf, score
+
+    # Drop a spurious leading digit when the suffix is already a strong plate read
+    # (e.g. assembled "8567955" vs OCR "567955").
+    if len(best_digits) >= 6:
+        inner = best_digits[1:]
+        for digits, conf, score in expanded:
+            if digits != inner:
+                continue
+            if not (_MIN_PLATE_DIGITS <= len(digits) <= _MAX_PLATE_DIGITS):
+                continue
+            if score >= best_score * 0.55:
+                best_digits, best_conf, best_score = digits, conf, score
 
     return best_digits, best_conf
